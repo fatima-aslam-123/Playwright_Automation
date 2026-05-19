@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import path from 'path';
 
 test('User should signup successfully', async ({ page }) => {
 
@@ -19,7 +20,6 @@ test('User should signup successfully', async ({ page }) => {
 
 await page.fill('#phoneNumber', '12312341234');
   // upload image
-import path from 'path';
 
 const filePath = path.resolve('tests/assets/profilepic.jpeg');
 
