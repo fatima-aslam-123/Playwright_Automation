@@ -19,7 +19,11 @@ test('User should signup successfully', async ({ page }) => {
 
 await page.fill('#phoneNumber', '12312341234');
   // upload image
-await page.setInputFiles('#profilePhoto', 'C:/Users/LENOVO/Downloads/profilepic.jpeg');
+import path from 'path';
+
+const filePath = path.resolve('tests/assets/profilepic.jpeg');
+
+await page.setInputFiles('#profilePhoto', filePath);
 
   // checkbox
 await page.check('#remember_me');
