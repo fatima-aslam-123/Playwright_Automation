@@ -10,6 +10,11 @@ const applyBtn = (page) => page.getByRole('button', { name: 'Apply Filters' });
 const clearAllBtn = (page) => page.getByRole('button', { name: /^Clear all$/i });
 const specificCompaniesAcc = (page) => page.getByRole('button', { name: 'Specific companies' });
 const companyAttributesAcc = (page) => page.getByRole('button', { name: 'Company attributes' });
+const advancedFiltersAcc = (page) => page.getByRole('button', { name: 'Advanced filters' });
+const industryAcc = (page) => page.getByRole('button', { name: 'Industry' });
+const locationAcc = (page) => page.getByRole('button', { name: 'Location' });
+const fundingAcc = (page) => page.getByRole('button', { name: 'Funding' });
+const lookalikeAcc = (page) => page.getByRole('button', { name: 'Lookalike' });
 const resultsTable = (page) => page.getByRole('table');
 
 // ---------- workflow helpers ----------
@@ -280,6 +285,22 @@ test('Combined Company Attributes filters return results matching all criteria',
   await clearAllAndExpectReset(page);
 });
 
+test('Customers filter returns companies that are customers of the selected company', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, advancedFiltersAcc);
+
+  const customersInput = page.getByRole('combobox', { name: 'Search customers' });
+  await customersInput.click();
+  await customersInput.pressSequentially('Microsoft', { delay: 100 });
+  await page.getByRole('option').filter({ hasText: /microsoft/i }).first().click();
+
+  await applyAndExpectResults(page);
+  await expect(page.getByText(/Customers of:/i).first()).toBeVisible();
+
+  await clearAllAndExpectReset(page);
+  await expect(page.getByText(/Customers of:/i)).toHaveCount(0);
+});
+
 test('Clear All restores default state after Company Attributes filters', async ({ page }) => {
   await gotoCompaniesPage(page);
   await expandSection(page, companyAttributesAcc);
@@ -298,4 +319,176 @@ test('Clear All restores default state after Company Attributes filters', async 
 
   await clearAllAndExpectReset(page);
   await expect(page.getByText(/HeadCount:/i)).toHaveCount(0);
+});
+
+// ============================================================
+// Industry / Location / Funding / Lookalike / Advanced filters
+// ============================================================
+
+// PrimeNG p-tree wraps a hidden input under styled markup — force-click the input within the treeitem row
+async function toggleTreeItem(page, name) {
+  await page.getByRole('treeitem', { name, exact: true })
+    .locator('input[type="checkbox"]')
+    .first()
+    .click({ force: true });
+}
+
+test('Select Industry filter returns companies from the selected industry', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, industryAcc);
+
+  await toggleTreeItem(page, 'Technology Companies');
+
+  await applyAndExpectResults(page);
+  await expect(page.getByText(/Industry/i).first()).toBeVisible();
+
+  await clearAllAndExpectReset(page);
+});
+
+test('Select Location filter returns companies from the selected location', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, locationAcc);
+
+  await toggleTreeItem(page, 'US States');
+
+  await applyAndExpectResults(page);
+  await expect(page.getByText(/Location/i).first()).toBeVisible();
+
+  await clearAllAndExpectReset(page);
+});
+
+test('Or Enter Location Manually filter returns companies for the entered location', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, locationAcc);
+
+  const manualLocation = page.getByRole('combobox', { name: 'Enter city, state, or country' });
+  await manualLocation.click();
+  await manualLocation.pressSequentially('San Francisco', { delay: 80 });
+  await manualLocation.press('Enter');
+
+  await applyAndExpectResults(page);
+  await expect(page.getByText(/Location/i).first()).toBeVisible();
+
+  await clearAllAndExpectReset(page);
+});
+
+test('Funding In The Last filter returns companies funded within the selected timeframe', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, fundingAcc);
+
+  // Dropdown defaults to "All Time" — open it and pick a different option
+  await page.locator('span[role="combobox"]').filter({ hasText: /All Time|Select Last Funding Period/i }).first().click();
+  await page.getByRole('option').filter({ hasText: /^(?!All Time$).+/i }).first().click();
+
+  await applyAndExpectResults(page);
+
+  await clearAllAndExpectReset(page);
+});
+
+test('Amount filter returns companies funded within the selected funding range', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, fundingAcc);
+
+  const minAmount = page.getByRole('spinbutton', { name: /Min/ }).filter({ has: page.locator('[placeholder="Min $"]') }).or(page.locator('input[placeholder="Min $"]'));
+  const maxAmount = page.locator('input[placeholder="Max $"]');
+  await minAmount.first().click();
+  await minAmount.first().fill('1000000');
+  await minAmount.first().press('Tab');
+  await maxAmount.click();
+  await maxAmount.fill('50000000');
+  await maxAmount.press('Tab');
+
+  await applyAndExpectResults(page);
+
+  await clearAllAndExpectReset(page);
+});
+
+test('Round Type filter returns companies with the selected funding round type', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, fundingAcc);
+
+  await toggleTreeItem(page, 'Series A');
+
+  await applyAndExpectResults(page);
+
+  await clearAllAndExpectReset(page);
+});
+
+test('Funding Type filter returns companies matching the selected funding type', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, fundingAcc);
+
+  // Pair with Round Type so Apply Filters is enabled (Funding Type alone is a refinement)
+  await toggleTreeItem(page, 'Series A');
+  await page.getByRole('radio', { name: 'Organization' }).check();
+
+  await applyAndExpectResults(page);
+
+  await clearAllAndExpectReset(page);
+});
+
+test('Public Companies filter returns only publicly traded companies', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, companyAttributesAcc);
+
+  // Pair with HeadCount so the search has a result set to restrict to public companies
+  const minInput = page.getByRole('spinbutton', { name: 'Min' });
+  const maxInput = page.getByRole('spinbutton', { name: 'Max' });
+  await minInput.click();
+  await minInput.fill('500');
+  await minInput.press('Tab');
+  await maxInput.click();
+  await maxInput.fill('100000');
+  await maxInput.press('Tab');
+
+  await expandSection(page, fundingAcc);
+  await page.getByRole('checkbox', { name: 'Public Companies' }).check();
+
+  await applyAndExpectResults(page);
+
+  await clearAllAndExpectReset(page);
+});
+
+test('Lookalike of filter returns similar companies to the selected company', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, lookalikeAcc);
+
+  // Lookalike's input uses placeholder "Search company" (no ellipsis), unlike Specific Companies' "Search company..."
+  const lookalikeInput = page.getByPlaceholder('Search company', { exact: true });
+  await lookalikeInput.click();
+  await lookalikeInput.pressSequentially('Microsoft', { delay: 100 });
+  await page.getByRole('option').filter({ hasText: /microsoft/i }).first().click();
+
+  await applyAndExpectResults(page);
+  await expect(page.getByText(/Lookalike of:/i).first()).toBeVisible();
+
+  await clearAllAndExpectReset(page);
+});
+
+test('Prompt filter returns AI-generated company search results for the entered prompt', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, lookalikeAcc);
+
+  const promptArea = page.getByPlaceholder('I am seeking food delivery companies excluding restaurants');
+  await promptArea.click();
+  await promptArea.fill('Cloud computing companies headquartered in the United States');
+
+  await applyAndExpectResults(page);
+
+  await clearAllAndExpectReset(page);
+});
+
+test('Suppliers of filter returns supplier-related companies for the selected company', async ({ page }) => {
+  await gotoCompaniesPage(page);
+  await expandSection(page, advancedFiltersAcc);
+
+  const supplierInput = page.getByRole('combobox', { name: 'Search supplier' });
+  await supplierInput.click();
+  await supplierInput.pressSequentially('Apple', { delay: 100 });
+  await page.getByRole('option').filter({ hasText: /apple/i }).first().click();
+
+  await applyAndExpectResults(page);
+  await expect(page.getByText(/Suppliers of:/i).first()).toBeVisible();
+
+  await clearAllAndExpectReset(page);
 });
