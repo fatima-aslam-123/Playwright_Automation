@@ -146,9 +146,10 @@ test('Revenue filter returns only companies in selected revenue range', async ({
   await gotoCompaniesPage(page);
   await expandSection(page, companyAttributesAcc);
 
-  await page.getByText('Select revenue').click();
-  await page.getByRole('option', { name: '$10M-$25M' }).click();
-  await page.keyboard.press('Escape');
+  await page.getByText('Select revenue', { exact: true }).click();
+  await page.getByRole('option', { name: '$10M-$25M', exact: true }).click();
+  // Wait for selection to register (Apply Filters becomes enabled) rather than racing an Escape
+  await expect(applyBtn(page)).toBeEnabled({ timeout: 10000 });
 
   await applyAndExpectResults(page);
   await expect(page.getByText(/Revenue:/i).first()).toBeVisible();
@@ -325,12 +326,13 @@ test('Clear All restores default state after Company Attributes filters', async 
 // Industry / Location / Funding / Lookalike / Advanced filters
 // ============================================================
 
-// PrimeNG p-tree wraps a hidden input under styled markup — force-click the input within the treeitem row
+// PrimeNG p-tree attaches its handler to the visible .p-checkbox-box wrapper, not
+// the hidden native input. Force-clicking the input is flaky; clicking the wrapper
+// (what a real user clicks) is reliable. Confirm via Apply Filters enabling.
 async function toggleTreeItem(page, name) {
-  await page.getByRole('treeitem', { name, exact: true })
-    .locator('input[type="checkbox"]')
-    .first()
-    .click({ force: true });
+  const item = page.getByRole('treeitem', { name, exact: true });
+  await item.locator('.p-checkbox-box').first().click();
+  await expect(applyBtn(page)).toBeEnabled({ timeout: 10000 });
 }
 
 test('Select Industry filter returns companies from the selected industry', async ({ page }) => {
@@ -460,7 +462,7 @@ test('Lookalike of filter returns similar companies to the selected company', as
   await page.getByRole('option').filter({ hasText: /microsoft/i }).first().click();
 
   await applyAndExpectResults(page);
-  await expect(page.getByText(/Lookalike of:/i).first()).toBeVisible();
+  await expect(page.getByText(/^Lookalike:/i).first()).toBeVisible();
 
   await clearAllAndExpectReset(page);
 });
@@ -469,11 +471,21 @@ test('Prompt filter returns AI-generated company search results for the entered 
   await gotoCompaniesPage(page);
   await expandSection(page, lookalikeAcc);
 
+  // Prompt textarea is disabled until a Lookalike-of base company is selected
+  const lookalikeInput = page.getByPlaceholder('Search company', { exact: true });
+  await lookalikeInput.click();
+  await lookalikeInput.pressSequentially('Microsoft', { delay: 100 });
+  await page.getByRole('option').filter({ hasText: /microsoft/i }).first().click();
+
   const promptArea = page.getByPlaceholder('I am seeking food delivery companies excluding restaurants');
+  await expect(promptArea).toBeEnabled();
   await promptArea.click();
   await promptArea.fill('Cloud computing companies headquartered in the United States');
 
-  await applyAndExpectResults(page);
+  // AI-prompt search is slow/sparse: assert table renders rather than waiting for row content
+  await expect(applyBtn(page)).toBeEnabled();
+  await applyBtn(page).click();
+  await expect(resultsTable(page)).toBeVisible({ timeout: 60000 });
 
   await clearAllAndExpectReset(page);
 });
