@@ -1,58 +1,98 @@
 # Companies Page Test Flow Skill
 
 ## Objective
-While generating or updating Playwright test cases for the Companies page, always follow this execution pattern.
+While generating or updating Playwright test cases for the Companies page, always follow this strict execution pattern.
+
+---
 
 ## Mandatory Rules
 
-1. Perform sign in/login only in the first test case.
-2. Do NOT repeat login in remaining test cases.
-3. Reuse the existing authenticated session for all next test cases.
-4. After every filter test:
-   - Run the search/filter.
-   - Wait for results to appear.
-   - Verify results are displayed.
-   - Click the "Clear All" button.
-   - Verify all applied filters and results disappear/reset.
-5. Continue the same flow for all remaining test cases.
-6. Avoid unnecessary page reloads.
-7. Use Playwright best practices.
-8. Prefer reusable functions and clean locators.
-9. Keep tests independent but session-aware.
-10. Use proper assertions after every action.
+1. Perform login/sign-in **only once at the start of the first test case**.
+2. Do NOT repeat login in any subsequent test cases.
+3. After login, **stay on the same authenticated session for all tests**.
+4. Do NOT reload or re-open the Companies page for every test case.
+5. All test cases must run on the **same already opened Companies page session**.
 
-## Expected Flow
+---
 
-- First test:
+## Test Execution Flow
+
+### First Test Case Only:
+
+- Perform login
+- Navigate to Companies page (once)
+- Apply filter
+- Verify results appear
+- Click "Clear All"
+- Verify:
+  - filters reset
+  - results disappear or return to default state
+
+---
+
+### All Remaining Test Cases:
+
+- Do NOT login again
+- Do NOT reopen Companies page
+- Continue on the same page/session
+- Apply filter or action
+- Verify results
+- Click "Clear All"
+- Verify reset state
+- Proceed to next test
+
+---
+
+## Critical Behaviour Rules
+
+- Keep browser session alive across all tests.
+- Use `beforeAll` for login setup.
+- Use `beforeEach` ONLY if required, but avoid page reloads.
+- Avoid `page.goto()` repeatedly for Companies page.
+- Ensure tests are session-aware, not page-restarting.
+- Each test must assume user is already on Companies page (after first test).
+
+---
+
+## Expected Flow Summary
+
+- Test 1:
   - Login
   - Open Companies page
-  - Apply filter
+  - Run filter
   - Verify results
-  - Click Clear All
+  - Clear All
   - Verify reset
 
-- Remaining tests:
-  - Directly open Companies page
-  - Apply filter
+- Test 2 onwards:
+  - Directly operate on same page
+  - Run filter
   - Verify results
-  - Click Clear All
+  - Clear All
   - Verify reset
 
-## Example Expectations
-
-- Results section should become visible after search.
-- After clicking Clear All:
-  - Filters should reset.
-  - Search results should disappear or return to default state.
+---
 
 ## Coding Guidelines
 
-- Use async/await properly.
-- Use stable selectors.
-- Avoid hardcoded waits.
-- Prefer:
-  - page.getByRole()
-  - page.getByPlaceholder()
-  - page.locator()
-- Use expect assertions.
-- Keep reusable login helper separate.
+- Use async/await properly
+- Use Playwright best practices
+- Use stable locators:
+  - `page.getByRole()`
+  - `page.getByPlaceholder()`
+  - `page.locator()`
+- Avoid hardcoded waits (`waitForTimeout`)
+- Prefer assertions after every step:
+  - `expect(results).toBeVisible()`
+- Create reusable login helper function
+
+---
+
+## Important Intent
+
+The goal is:
+👉 One login session  
+👉 One page session  
+👉 Multiple test validations  
+👉 No unnecessary navigation or reloads  
+👉 Clean and fast execution flow
