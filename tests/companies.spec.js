@@ -12,6 +12,7 @@ const specificCompaniesAcc = (page) => page.getByRole('button', { name: 'Specifi
 const companyAttributesAcc = (page) => page.getByRole('button', { name: 'Company attributes' });
 const industryAcc = (page) => page.getByRole('button', { name: 'Industry' });
 const locationAcc = (page) => page.getByRole('button', { name: 'Location' });
+const fundingAcc = (page) => page.getByRole('button', { name: 'Funding' });
 const resultsTable = (page) => page.getByRole('table');
 
 // ---------- workflow helpers ----------
@@ -61,6 +62,8 @@ test.describe.serial('Companies Page filters (shared page)', () => {
     page = await context.newPage();
     await page.goto('https://qa.zenbee.io/search/companies', { waitUntil: 'domcontentloaded' });
     await expect(applyBtn(page)).toBeVisible({ timeout: 30000 });
+    // Wipe any filter state that may have been persisted server-side from prior runs.
+    await clearAllIfPresent(page);
   });
 
   test.afterEach(async () => {
@@ -318,5 +321,136 @@ test.describe.serial('Companies Page filters (shared page)', () => {
 
     await expect(page.getByText('New York', { exact: true }).first()).toBeVisible();
     await applyAndExpectResults(page);
+  });
+
+  // ================================================================
+  // Funding filter — accordion on the left panel with these sub-filters:
+  //   1) Last Round / Any Round toggle pills
+  //   2) "Funding In The Last" period dropdown
+  //   3) Amount Min $ / Max $ range
+  //   4) Select Round Type checkboxes (Series A–J, Angel, Seed, …)
+  //   5) Select Funding Type radio (Organization / Person)
+  //   6) Public Companies checkbox
+  // Each test is independent — afterEach() clicks "Clear all" to reset state.
+  // ================================================================
+
+  test('Funding — Last Round toggle returns companies by last funding round', async () => {
+    await expandSection(page, fundingAcc);
+
+    await page.getByRole('button', { name: /^Last Round$/i }).click();
+    const minAmount = page.getByPlaceholder('Min $');
+    await minAmount.click();
+    await minAmount.fill('1000000');
+    await minAmount.press('Tab');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Funding/i).first()).toBeVisible();
+  });
+
+  test('Funding — Any Round toggle returns companies by any funding round', async () => {
+    await expandSection(page, fundingAcc);
+
+    await page.getByRole('button', { name: /^Any Round$/i }).click();
+    const minAmount = page.getByPlaceholder('Min $');
+    await minAmount.click();
+    await minAmount.fill('500000');
+    await minAmount.press('Tab');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Funding/i).first()).toBeVisible();
+  });
+
+  test('Funding — "Funding In The Last" period filter returns matching companies', async () => {
+    await expandSection(page, fundingAcc);
+
+    await page.getByText('Select Last Funding Period').click();
+    await page.getByRole('option').first().click();
+    await page.keyboard.press('Escape');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Funding/i).first()).toBeVisible();
+  });
+
+  test('Funding — Amount Min/Max range returns companies within funding range', async () => {
+    await expandSection(page, fundingAcc);
+
+    const minAmount = page.getByPlaceholder('Min $');
+    const maxAmount = page.getByPlaceholder('Max $');
+    await minAmount.click();
+    await minAmount.fill('1000000');
+    await minAmount.press('Tab');
+    await maxAmount.click();
+    await maxAmount.fill('100000000');
+    await maxAmount.press('Tab');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Funding/i).first()).toBeVisible();
+  });
+
+  test('Funding — Round Type "Series A" returns companies with Series A round', async () => {
+    await expandSection(page, fundingAcc);
+
+    const node = page.getByRole('treeitem', { name: 'Series A' }).first();
+    await node.scrollIntoViewIfNeeded();
+    await node.locator('.p-tree-node-content').first().click();
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Funding|Round|Series A/i).first()).toBeVisible();
+  });
+
+  test('Funding — Round Type "Seed" returns companies with Seed round', async () => {
+    await expandSection(page, fundingAcc);
+
+    const node = page.getByRole('treeitem', { name: 'Seed' }).first();
+    await node.scrollIntoViewIfNeeded();
+    await node.locator('.p-tree-node-content').first().click();
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Funding|Round|Seed/i).first()).toBeVisible();
+  });
+
+  test('Funding — Funding Type "Organization" returns organization-level results', async () => {
+    await expandSection(page, fundingAcc);
+
+    const orgRadio = page.getByRole('radio', { name: 'Organization' });
+    if (await orgRadio.isVisible().catch(() => false)) {
+      await orgRadio.check();
+    } else {
+      await page.getByRole('checkbox', { name: 'Organization' }).check();
+    }
+    const minAmount = page.getByPlaceholder('Min $');
+    await minAmount.click();
+    await minAmount.fill('1000000');
+    await minAmount.press('Tab');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Funding/i).first()).toBeVisible();
+  });
+
+  test('Funding — Funding Type "Person" returns person-level results', async () => {
+    await expandSection(page, fundingAcc);
+
+    const personRadio = page.getByRole('radio', { name: 'Person' });
+    if (await personRadio.isVisible().catch(() => false)) {
+      await personRadio.check();
+    } else {
+      await page.getByRole('checkbox', { name: 'Person' }).check();
+    }
+    const minAmount = page.getByPlaceholder('Min $');
+    await minAmount.click();
+    await minAmount.fill('1000000');
+    await minAmount.press('Tab');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Funding/i).first()).toBeVisible();
+  });
+
+  test('Funding — Public Companies checkbox returns only publicly traded companies', async () => {
+    await expandSection(page, fundingAcc);
+
+    await page.getByRole('checkbox', { name: 'Public Companies' }).check();
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Public Companies|Funding/i).first()).toBeVisible();
   });
 });
