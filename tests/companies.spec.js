@@ -13,6 +13,8 @@ const companyAttributesAcc = (page) => page.getByRole('button', { name: 'Company
 const industryAcc = (page) => page.getByRole('button', { name: 'Industry' });
 const locationAcc = (page) => page.getByRole('button', { name: 'Location' });
 const fundingAcc = (page) => page.getByRole('button', { name: 'Funding' });
+const lookalikeAcc = (page) => page.getByRole('button', { name: 'Lookalike' });
+const advancedFiltersAcc = (page) => page.getByRole('button', { name: 'Advanced filters' });
 const resultsTable = (page) => page.getByRole('table');
 
 // ---------- workflow helpers ----------
@@ -28,6 +30,23 @@ async function applyAndExpectResults(page) {
   await applyBtn(page).click();
   await expect(resultsTable(page)).toBeVisible({ timeout: 30000 });
   await expect(resultsTable(page).getByRole('row')).not.toHaveCount(0);
+}
+
+// Type `query` into an autocomplete combobox and pick the first matching suggestion.
+// Suggestions render in a separate "Option List" overlay; scope to it so we don't
+// accidentally match the field's own wrapper option (the Lookalike input is itself
+// wrapped in an <option> whose text mirrors the typed value).
+async function chooseAutocomplete(page, comboName, query, optionRe) {
+  const combo = page.getByRole('combobox', { name: comboName });
+  await combo.click();
+  await combo.pressSequentially(query, { delay: 100 });
+  const option = page
+    .getByRole('listbox', { name: 'Option List' })
+    .getByRole('option')
+    .filter({ hasText: optionRe })
+    .first();
+  await option.waitFor({ state: 'visible', timeout: 15000 });
+  await option.click();
 }
 
 async function clearAllIfPresent(page) {
@@ -58,10 +77,21 @@ test.describe.serial('Companies Page filters (shared page)', () => {
   let page;
 
   test.beforeAll(async ({ browser }) => {
+    // Hook timeouts are NOT covered by test.setTimeout above — extend this hook's
+    // own budget so a slow cold SPA boot doesn't blow the default 30s.
+    test.setTimeout(120000);
     context = await browser.newContext({ storageState: 'playwright/.auth/user.json' });
     page = await context.newPage();
     await page.goto('https://qa.zenbee.io/search/companies', { waitUntil: 'domcontentloaded' });
-    await expect(applyBtn(page)).toBeVisible({ timeout: 30000 });
+    // domcontentloaded fires before the SPA hydrates. The boot splash
+    // ("Loading your sales intelligence platform...") stays in the DOM behind the app,
+    // so don't wait for it to hide — just wait (generously) for the real UI to render.
+    await expect(applyBtn(page)).toBeVisible({ timeout: 90000 });
+    // The content panel loader ("...prepare your search interface") clears only once the
+    // app fully hydrates. On webkit the sidebar remounts at that point, so wait for the
+    // loader to disappear before any test interacts with the accordions.
+    await expect(page.getByText(/prepare your search interface/i))
+      .toBeHidden({ timeout: 60000 });
     // Wipe any filter state that may have been persisted server-side from prior runs.
     await clearAllIfPresent(page);
   });
@@ -232,14 +262,14 @@ test.describe.serial('Companies Page filters (shared page)', () => {
 
     await applyAndExpectResults(page);
 
-    const rows = resultsTable(page).getByRole('row');
-    const count = Math.min(await rows.count(), 6);
-    let rowsWithDomain = 0;
-    for (let i = 1; i < count; i++) {
-      const httpLinks = await rows.nth(i).locator('a[href^="http"]').count();
-      if (httpLinks > 0) rowsWithDomain++;
-    }
-    expect(rowsWithDomain).toBeGreaterThan(0);
+    // The filter guarantees every returned company has a domain, rendered as a
+    // "Visit Website" globe link (i.pi-globe). The old code counted rows via getByRole('row')
+    // immediately after Apply, but the header row alone satisfies applyAndExpectResults'
+    // "rows != 0" check while data rows are still loading — so the probe raced and saw 0.
+    // Use a web-first assertion that waits for an actual website link to appear.
+    const websiteLinks = resultsTable(page).locator('a:has(i.pi-globe)');
+    await expect(websiteLinks.first()).toBeVisible({ timeout: 15000 });
+    expect(await websiteLinks.count()).toBeGreaterThan(0);
   });
 
   test('Combined Company Attributes filters return results matching all criteria', async () => {
@@ -363,9 +393,10 @@ test.describe.serial('Companies Page filters (shared page)', () => {
   test('Funding — "Funding In The Last" period filter returns matching companies', async () => {
     await expandSection(page, fundingAcc);
 
-    await page.getByText('Select Last Funding Period').click();
-    await page.getByRole('option').first().click();
-    await page.keyboard.press('Escape');
+    const periodCombo = page.getByRole('combobox', { name: 'Select Last Funding Period' });
+    await periodCombo.click();              // open the PrimeVue select overlay
+    await page.keyboard.press('ArrowDown'); // highlight the first real period option
+    await page.keyboard.press('Enter');     // select it (also closes the overlay)
 
     await applyAndExpectResults(page);
     await expect(page.getByText(/Funding/i).first()).toBeVisible();
@@ -452,5 +483,49 @@ test.describe.serial('Companies Page filters (shared page)', () => {
 
     await applyAndExpectResults(page);
     await expect(page.getByText(/Public Companies|Funding/i).first()).toBeVisible();
+  });
+
+  // ================================================================
+  // Lookalike + Advanced filters
+  //   - Lookalike: choosing a company in "Lookalike of" enables the Prompt
+  //     textarea (disabled until then); fill the prompt, then apply.
+  //   - Advanced filters: "Suppliers of" and "Customers of" autocompletes.
+  // All three fields are autocompletes — type, then pick from the dropdown.
+  // ================================================================
+
+  test('Lookalike — company selection enables Prompt and returns lookalike companies', async () => {
+    await expandSection(page, lookalikeAcc);
+
+    // The Prompt textarea stays disabled until a lookalike company is chosen.
+    const prompt = page.getByPlaceholder('I am seeking food delivery companies excluding restaurants');
+    await expect(prompt).toBeDisabled();
+
+    await chooseAutocomplete(page, 'Search company', 'Google', /google/i);
+
+    // Selecting a company unlocks the Prompt field.
+    await expect(prompt).toBeEnabled();
+    await prompt.click();
+    await prompt.fill('I am seeking food delivery companies excluding restaurants');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Google|Lookalike/i).first()).toBeVisible();
+  });
+
+  test('Advanced filters — "Suppliers of" returns companies for the selected supplier', async () => {
+    await expandSection(page, advancedFiltersAcc);
+
+    await chooseAutocomplete(page, 'Search supplier', 'Google', /google/i);
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Google|Suppliers/i).first()).toBeVisible();
+  });
+
+  test('Advanced filters — "Customers of" returns companies for the selected customer', async () => {
+    await expandSection(page, advancedFiltersAcc);
+
+    await chooseAutocomplete(page, 'Search customers', 'Microsoft', /microsoft/i);
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Microsoft|Customers/i).first()).toBeVisible();
   });
 });
