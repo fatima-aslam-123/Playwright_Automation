@@ -54,6 +54,99 @@ async function chooseAutocomplete(page, comboName, query, optionRe) {
   await option.click();
 }
 
+// ---------- single-filter setters (reused to build combination scenarios) ----------
+async function setHeadCount(page, min, max) {
+  await expandSection(page, companyAttributesAcc);
+  // exact:true so "Min"/"Max" don't also match Funding's "Min $"/"Max $" spinbuttons
+  // when the Funding accordion happens to be expanded from a prior scenario.
+  const minInput = page.getByRole('spinbutton', { name: 'Min', exact: true });
+  const maxInput = page.getByRole('spinbutton', { name: 'Max', exact: true });
+  await minInput.click();
+  await minInput.fill(String(min));
+  await minInput.press('Tab');
+  await maxInput.click();
+  await maxInput.fill(String(max));
+  await maxInput.press('Tab');
+}
+
+async function selectRevenue(page, label) {
+  await expandSection(page, companyAttributesAcc);
+  await page.getByText('Select revenue').click();
+  await page.getByRole('option', { name: label }).click();
+  await page.keyboard.press('Escape');
+}
+
+async function selectFoundingYear(page, label) {
+  await expandSection(page, companyAttributesAcc);
+  await page.getByText('Select founding year').click();
+  await page.getByRole('option', { name: label }).click();
+  await page.keyboard.press('Escape');
+}
+
+async function addTechnology(page, name) {
+  await expandSection(page, companyAttributesAcc);
+  const input = page.getByRole('combobox', { name: 'Search Technology' });
+  await input.click();
+  await input.pressSequentially(name, { delay: 80 });
+  const option = page.getByRole('option').filter({ hasText: new RegExp(name, 'i') }).first();
+  if (await option.isVisible().catch(() => false)) {
+    await option.click();
+  } else {
+    await input.press('Enter');
+  }
+}
+
+async function addKeyword(page, comboName, keyword) {
+  await expandSection(page, companyAttributesAcc);
+  const input = page.getByRole('combobox', { name: comboName });
+  await input.click();
+  await input.pressSequentially(keyword, { delay: 60 });
+  await input.press('Enter');
+}
+
+async function selectTreeNode(page, accordionBtnFn, name) {
+  await expandSection(page, accordionBtnFn);
+  const node = page.getByRole('treeitem', { name }).first();
+  await node.scrollIntoViewIfNeeded();
+  await node.locator('.p-tree-node-content').first().click();
+}
+
+async function setFundingRound(page, roundLabel, min) {
+  await expandSection(page, fundingAcc);
+  await page.getByRole('button', { name: new RegExp(`^${roundLabel}$`, 'i') }).click();
+  const minAmount = page.getByPlaceholder('Min $');
+  await minAmount.click();
+  await minAmount.fill(String(min));
+  await minAmount.press('Tab');
+}
+
+async function setFundingAmount(page, min, max) {
+  await expandSection(page, fundingAcc);
+  const minAmount = page.getByPlaceholder('Min $');
+  const maxAmount = page.getByPlaceholder('Max $');
+  await minAmount.click();
+  await minAmount.fill(String(min));
+  await minAmount.press('Tab');
+  await maxAmount.click();
+  await maxAmount.fill(String(max));
+  await maxAmount.press('Tab');
+}
+
+async function selectFundingType(page, label) {
+  await expandSection(page, fundingAcc);
+  const radio = page.getByRole('radio', { name: label });
+  if (await radio.isVisible().catch(() => false)) {
+    await radio.check();
+  } else {
+    await page.getByRole('checkbox', { name: label }).check();
+  }
+}
+
+async function checkPublicCompanies(page) {
+  await expandSection(page, fundingAcc);
+  await page.getByRole('checkbox', { name: 'Public Companies' }).check();
+}
+
 async function clearAllIfPresent(page) {
   const btn = clearAllBtn(page);
   if (await btn.isVisible().catch(() => false)) {
@@ -532,5 +625,144 @@ test.describe.serial('Companies Page filters (shared page)', () => {
 
     await applyAndExpectResults(page);
     await expect(page.getByText(/Microsoft|Customers/i).first()).toBeVisible();
+  });
+
+  // ================================================================
+  // Combination scenarios — apply 2-3 filters together to narrow down to a
+  // particular set of companies, Apply, assert results, then afterEach clears
+  // all filters before the next scenario. Each test reuses the single-filter
+  // setters defined above so the intent of each scenario stays readable.
+  // ================================================================
+
+  test('Scenario: mid-size companies in the $10M-$25M revenue band', async () => {
+    await setHeadCount(page, 100, 5000);
+    await selectRevenue(page, '$10M-$25M');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/HeadCount/i).first()).toBeVisible();
+    await expect(page.getByText(/Revenue:/i).first()).toBeVisible();
+  });
+
+  test('Scenario: large technology companies (headcount + industry)', async () => {
+    await setHeadCount(page, 1000, 100000);
+    await selectTreeNode(page, industryAcc, 'Technology Companies');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Industries:/i).first()).toBeVisible();
+  });
+
+  test('Scenario: construction companies located in the US', async () => {
+    await selectTreeNode(page, industryAcc, 'Construction Companies');
+    await selectTreeNode(page, locationAcc, 'US States');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Industries:/i).first()).toBeVisible();
+    await expect(page.getByText(/Locations:/i).first()).toBeVisible();
+  });
+
+  test('Scenario: large public companies ($100M-$250M revenue + public)', async () => {
+    await selectRevenue(page, '$100M-$250M');
+    await checkPublicCompanies(page);
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Revenue:/i).first()).toBeVisible();
+  });
+
+  test('Scenario: recent technology startups (founding year + industry)', async () => {
+    await selectFoundingYear(page, '1-2 years ago');
+    await selectTreeNode(page, industryAcc, 'Technology Companies');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Startups:|Industries:/i).first()).toBeVisible();
+  });
+
+  test('Scenario: technology companies using Salesforce', async () => {
+    await addTechnology(page, 'Salesforce');
+    await selectTreeNode(page, industryAcc, 'Technology Companies');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Technology:|Industries:/i).first()).toBeVisible();
+  });
+
+  test('Scenario: mid-size companies mentioning "cloud"', async () => {
+    await addKeyword(page, 'Include Keywords', 'cloud');
+    await setHeadCount(page, 100, 5000);
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Include Keywords:|HeadCount/i).first()).toBeVisible();
+  });
+
+  test('Scenario: financial services companies excluding "gaming"', async () => {
+    await selectTreeNode(page, industryAcc, 'Financial Services Companies');
+    await addKeyword(page, 'Exclude Keywords', 'gaming');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Industries:|Exclude Keywords:/i).first()).toBeVisible();
+  });
+
+  test('Scenario: Series A organizations (round type + funding type)', async () => {
+    await selectTreeNode(page, fundingAcc, 'Series A');
+    await selectFundingType(page, 'Organization');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Funding|Round|Series A/i).first()).toBeVisible();
+  });
+
+  test('Scenario: US companies in the $10M-$25M revenue band', async () => {
+    await selectTreeNode(page, locationAcc, 'US States');
+    await selectRevenue(page, '$10M-$25M');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Locations:/i).first()).toBeVisible();
+    await expect(page.getByText(/Revenue:/i).first()).toBeVisible();
+  });
+
+  test('Scenario: mid-size tech companies using Salesforce (3 filters)', async () => {
+    await setHeadCount(page, 100, 5000);
+    await selectTreeNode(page, industryAcc, 'Technology Companies');
+    await addTechnology(page, 'Salesforce');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/HeadCount/i).first()).toBeVisible();
+    await expect(page.getByText(/Industries:/i).first()).toBeVisible();
+  });
+
+  test('Scenario: sizeable public companies with recent funding (3 filters)', async () => {
+    await setHeadCount(page, 500, 50000);
+    await setFundingRound(page, 'Any Round', 1000000);
+    await checkPublicCompanies(page);
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/HeadCount|Funding/i).first()).toBeVisible();
+  });
+
+  test('Scenario: financial companies in the US within a headcount range (3 filters)', async () => {
+    await selectTreeNode(page, industryAcc, 'Financial Services Companies');
+    await selectTreeNode(page, locationAcc, 'US States');
+    await setHeadCount(page, 200, 20000);
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Industries:/i).first()).toBeVisible();
+    await expect(page.getByText(/Locations:/i).first()).toBeVisible();
+  });
+
+  test('Scenario: tech companies in a revenue band mentioning "software" (3 filters)', async () => {
+    await selectRevenue(page, '$10M-$25M');
+    await addKeyword(page, 'Include Keywords', 'software');
+    await selectTreeNode(page, industryAcc, 'Technology Companies');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Revenue:/i).first()).toBeVisible();
+    await expect(page.getByText(/Industries:/i).first()).toBeVisible();
+  });
+
+  test('Scenario: funded US technology companies within an amount range (3 filters)', async () => {
+    await setFundingAmount(page, 1000000, 100000000);
+    await selectTreeNode(page, industryAcc, 'Technology Companies');
+    await selectTreeNode(page, locationAcc, 'US States');
+
+    await applyAndExpectResults(page);
+    await expect(page.getByText(/Industries:/i).first()).toBeVisible();
+    await expect(page.getByText(/Locations:/i).first()).toBeVisible();
   });
 });
