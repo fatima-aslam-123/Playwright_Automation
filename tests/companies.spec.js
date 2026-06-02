@@ -39,7 +39,12 @@ async function applyAndExpectResults(page) {
 async function chooseAutocomplete(page, comboName, query, optionRe) {
   const combo = page.getByRole('combobox', { name: comboName });
   await combo.click();
-  await combo.pressSequentially(query, { delay: 100 });
+  // firefox can drop leading keystrokes when typing char by char, so set the bulk of
+  // the text atomically with fill(), then type one real keystroke to trigger the
+  // autocomplete search. Verify the full query landed before reading suggestions.
+  await combo.fill(query.slice(0, -1));
+  await combo.pressSequentially(query.slice(-1), { delay: 150 });
+  await expect(combo).toHaveValue(new RegExp(query, 'i'));
   const option = page
     .getByRole('listbox', { name: 'Option List' })
     .getByRole('option')
