@@ -180,7 +180,7 @@ test.describe.serial('Companies Page filters (shared page)', () => {
     test.setTimeout(120000);
     context = await browser.newContext({ storageState: 'playwright/.auth/user.json' });
     page = await context.newPage();
-    await page.goto('https://qa.zenbee.io/search/companies', { waitUntil: 'domcontentloaded' });
+    await page.goto('https://preprod.zenbee.io/search/companies', { waitUntil: 'domcontentloaded' });
     // domcontentloaded fires before the SPA hydrates. The boot splash
     // ("Loading your sales intelligence platform...") stays in the DOM behind the app,
     // so don't wait for it to hide — just wait (generously) for the real UI to render.

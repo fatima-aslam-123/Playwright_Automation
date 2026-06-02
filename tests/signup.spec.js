@@ -4,7 +4,7 @@ import path from 'path';
 test('User should signup successfully', async ({ page }) => {
 
   // open signup page
-  await page.goto('https://qa.zenbee.io/register', {
+  await page.goto('https://preprod.zenbee.io/register', {
     waitUntil: 'domcontentloaded'
   });
 

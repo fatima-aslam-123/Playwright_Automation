@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('User should login successfully', async ({ page }) => {
-  await page.goto('https://qa.zenbee.io/sign-in');
+  await page.goto('https://preprod.zenbee.io/sign-in');
   waitUntil: 'domcontentloaded'
 
   // enter email
@@ -13,6 +13,6 @@ test('User should login successfully', async ({ page }) => {
  await page.getByRole('button', { name: 'Login' }).click();
  waitUntil: 'domcontentloaded'
 
-await expect(page).toHaveURL('https://qa.zenbee.io/search/companies');
+await expect(page).toHaveURL('https://preprod.zenbee.io/search/companies');
  waitUntil: 'domcontentloaded'
 });
