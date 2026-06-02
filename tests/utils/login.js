@@ -1,11 +1,11 @@
 export async function login(page) {
 
-  await page.goto('https://qa.zenbee.io/sign-in', {
+  await page.goto('https://preprod.zenbee.io/sign-in', {
     waitUntil: 'domcontentloaded'
   });
 
   // enter email
-  await page.fill("//input[@id='emailAddress']", 'faslam+223@croyten.com');
+  await page.fill("//input[@id='emailAddress']", 'faslam+221@croyten.com');
 
   // enter password
   await page.fill("input[placeholder='Password']", 'Lahore@123');
@@ -14,6 +14,6 @@ export async function login(page) {
   await page.getByRole('button', { name: 'Login' }).click();
 
   // wait for dashboard/company page
-  await page.waitForURL('https://qa.zenbee.io/search/companies');
+  await page.waitForURL('https://preprod.zenbee.io/search/companies');
 
 }
