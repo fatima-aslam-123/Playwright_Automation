@@ -505,7 +505,7 @@ test.describe.serial('Companies Page filters (shared page)', () => {
     // Selecting a company unlocks the Prompt field.
     await expect(prompt).toBeEnabled();
     await prompt.click();
-    await prompt.fill('I am seeking food delivery companies excluding restaurants');
+    await prompt.fill('I am seeking software companies excluding Marketing companies');
 
     await applyAndExpectResults(page);
     await expect(page.getByText(/Google|Lookalike/i).first()).toBeVisible();
