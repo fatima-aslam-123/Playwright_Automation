@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     # Official Playwright image ships browsers + all OS deps prebaked,
     # so there is no `playwright install --with-deps` apt step to hang on.
@@ -29,8 +29,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Push = fast feedback on chromium only (~15-20 min).
+      # Pull request = full chromium + firefox + webkit coverage.
       - name: Run tests
-        run: npx playwright test
+        run: npx playwright test ${{ github.event_name == 'push' && '--project=chromium' || '' }}
 
       - name: Upload HTML report
         if: always()
