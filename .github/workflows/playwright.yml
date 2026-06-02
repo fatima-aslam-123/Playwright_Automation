@@ -9,6 +9,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      NEEDRESTART_MODE: a
+      NEEDRESTART_SUSPEND: "1"
 
     steps:
       - name: Checkout repo
