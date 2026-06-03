@@ -14,6 +14,11 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests',
+  /* Per-test timeout. The default is 30s, which is too tight for the slow QA
+   * backend (filter queries + cold SPA boot). Raise the global baseline so
+   * simple specs (login/signup) don't flake; heavy filter suites raise it
+   * further to 120s via test.describe.configure(). */
+  timeout: 60000,
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */

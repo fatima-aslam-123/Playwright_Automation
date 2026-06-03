@@ -260,7 +260,9 @@ async function enterLocationManually(page, location) {
 // Shared-page suite — one authenticated page across all tests
 // ============================================================
 test.describe('Contacts Page filters (shared page)', () => {
-  test.setTimeout(120000);
+  // test.setTimeout() is a no-op in describe-body scope — use describe.configure()
+  // so the 120s timeout actually applies to every test in the group.
+  test.describe.configure({ timeout: 120000 });
 
   let context;
   let page;

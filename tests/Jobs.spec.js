@@ -132,7 +132,9 @@ async function chooseCompany(page, name, optionRe) {
 // Serial suite — one page shared across all tests
 // ============================================================
 test.describe.serial('Jobs Page filters (shared page)', () => {
-  test.setTimeout(120000);
+  // test.setTimeout() is a no-op in describe-body scope — use describe.configure()
+  // so the 120s timeout actually applies to every test in the group.
+  test.describe.configure({ timeout: 120000 });
 
   let context;
   let page;

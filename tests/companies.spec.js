@@ -169,7 +169,11 @@ function parseUnit(text) {
 // Serial suite — one page shared across all tests
 // ============================================================
 test.describe.serial('Companies Page filters (shared page)', () => {
-  test.setTimeout(120000);
+  // NOTE: test.setTimeout() does NOT work in describe-body scope — it only
+  // applies inside a running test/hook. Use describe.configure() to set the
+  // per-test timeout for the whole group (otherwise tests silently fall back
+  // to the 30s default and time out on the slow QA backend).
+  test.describe.configure({ timeout: 120000 });
 
   let context;
   let page;
