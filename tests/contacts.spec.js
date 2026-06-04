@@ -28,7 +28,9 @@ const industryAcc = (page) => page.getByRole('button', { name: 'Industry' });
 // "Location" is a substring of "Headquarter location", so anchor on the capital-L
 // word-end to target the standalone Location accordion only.
 const locationAcc = (page) => page.getByRole('button', { name: /Location$/ });
+const headquarterAcc = (page) => page.getByRole('button', { name: 'Headquarter location' });
 const currentCompanyAcc = (page) => page.getByRole('button', { name: 'Current Company' });
+const pastCompaniesAcc = (page) => page.getByRole('button', { name: 'By past companies' });
 const resultsTable = (page) => page.getByRole('table');
 
 // ---------- workflow helpers ----------
@@ -38,6 +40,19 @@ async function expandSection(page, accordionBtnFn) {
   await expect(btn).toBeVisible({ timeout: 20000 });
   const expanded = await btn.evaluate(el => el.getAttribute('aria-expanded'));
   if (expanded !== 'true') await btn.click();
+}
+
+// Expand an accordion and return a locator for its content panel (via the header's
+// aria-controls, confirmed present on the live page). Several filters reuse identical
+// placeholders/accessible names across sections — "Search company..." (Current Company
+// vs By past companies), "Min"/"Max" (Years of experience vs Headcount), and the
+// location tree node names + manual-entry placeholder (Location vs Headquarter
+// location) — so scoping queries to the panel is the only reliable way to hit the
+// right instance.
+async function expandAndGetPanel(page, accordionBtnFn) {
+  await expandSection(page, accordionBtnFn);
+  const panelId = await accordionBtnFn(page).first().evaluate(el => el.getAttribute('aria-controls'));
+  return panelId ? page.locator(`[id="${panelId}"]`) : page;
 }
 
 async function applyAndExpectResults(page) {
@@ -98,12 +113,27 @@ async function setName(page, name) {
 async function setCompanyName(page, company) {
   await expandSection(page, currentCompanyAcc);
   const combo = page.getByRole('combobox', { name: 'Search company...' }).first();
+  await pickCompanySuggestion(page, combo, company);
+}
+
+// Shared company-autocomplete flow. Two confirmed-by-failure traps here:
+// 1. The combobox is itself nested inside an `option` element whose accessible name
+//    mirrors the typed text, so an unscoped getByRole('option') matches that wrapper
+//    (clicking it is a no-op) — scope to the body-level "Option List" overlay instead.
+// 2. locator.isVisible({timeout}) does NOT wait (it returns immediately), which raced
+//    the slow preprod autocomplete — use waitFor, which actually waits.
+async function pickCompanySuggestion(page, combo, company) {
   await combo.click();
   await combo.pressSequentially(company, { delay: 100 });
-  const option = page.getByRole('option').filter({ hasText: new RegExp(company, 'i') }).first();
-  if (await option.isVisible({ timeout: 8000 }).catch(() => false)) {
+  const option = page
+    .getByRole('listbox', { name: 'Option List' })
+    .getByRole('option')
+    .filter({ hasText: new RegExp(company, 'i') })
+    .first();
+  try {
+    await option.waitFor({ state: 'visible', timeout: 20000 });
     await option.click();
-  } else {
+  } catch {
     await combo.press('Enter');
   }
 }
@@ -249,11 +279,106 @@ async function enterLocationManually(page, location) {
     .getByRole('option')
     .filter({ hasText: new RegExp(location, 'i') })
     .first();
-  if (await option.isVisible({ timeout: 20000 }).catch(() => false)) {
+  // waitFor actually waits for the slow suggestion endpoint; isVisible({timeout})
+  // ignores the timeout and returns immediately, which raced and lost on firefox.
+  try {
+    await option.waitFor({ state: 'visible', timeout: 20000 });
     await option.click();
-  } else {
+  } catch {
     await input.press('Enter');
   }
+}
+
+// ---------- Headquarter location ----------
+// The HQ tree duplicates the Location tree's node names (US States, CA States, …),
+// so both helpers scope to the Headquarter accordion panel.
+async function selectHeadquarterTreeNode(page, name) {
+  const panel = await expandAndGetPanel(page, headquarterAcc);
+  const node = panel.getByRole('treeitem', { name, exact: true }).first();
+  await node.scrollIntoViewIfNeeded();
+  await node.locator('.p-tree-node-content').first().click();
+}
+
+async function enterHeadquarterLocationManually(page, location) {
+  const panel = await expandAndGetPanel(page, headquarterAcc);
+  const input = panel.getByPlaceholder('Enter city, state, or country').first();
+  await input.click();
+  await input.fill('');
+  await input.pressSequentially(location, { delay: 90 });
+  const option = page
+    .getByRole('listbox', { name: 'Option List' })
+    .getByRole('option')
+    .filter({ hasText: new RegExp(location, 'i') })
+    .first();
+  // waitFor actually waits for the slow suggestion endpoint; isVisible({timeout})
+  // ignores the timeout and returns immediately, which raced and lost on firefox.
+  try {
+    await option.waitFor({ state: 'visible', timeout: 20000 });
+    await option.click();
+  } catch {
+    await input.press('Enter');
+  }
+}
+
+// ---------- Current Company ----------
+async function setCompanyLinkedIn(page, url) {
+  const panel = await expandAndGetPanel(page, currentCompanyAcc);
+  const input = panel.getByPlaceholder('Enter Company LinkedIn URLs');
+  await input.click();
+  await input.pressSequentially(url, { delay: 15 });
+  await input.press('Enter');
+}
+
+async function setHeadcount(page, min, max) {
+  const panel = await expandAndGetPanel(page, currentCompanyAcc);
+  const minInput = panel.getByRole('spinbutton', { name: 'Min', exact: true });
+  const maxInput = panel.getByRole('spinbutton', { name: 'Max', exact: true });
+  await minInput.click();
+  await minInput.fill(String(min));
+  await minInput.press('Tab');
+  await maxInput.click();
+  await maxInput.fill(String(max));
+  await maxInput.press('Tab');
+}
+
+// Company Type is a PrimeVue Select. Options confirmed against the live page:
+// Public Company, Privately Held, Nonprofit, Educational Institution,
+// Government Agency, Self-Employed, Sole Proprietorship, Partnership.
+async function selectCompanyType(page, label) {
+  await expandSection(page, currentCompanyAcc);
+  await page.getByText('Select Company Type', { exact: true }).first().click();
+  const option = page.getByRole('option', { name: label }).first();
+  await option.waitFor({ state: 'visible', timeout: 10000 });
+  await option.click();
+}
+
+// Tick "Manually enter company name" and type a free-text company. The toggle reveals
+// a plain "Enter company name or domain" input (confirmed live; the autocomplete stays
+// in the DOM alongside it). Works for both Current Company and By past companies.
+async function setCompanyNameManually(page, accordionBtnFn, company) {
+  const panel = await expandAndGetPanel(page, accordionBtnFn);
+  const toggle = panel.getByText('Manually enter company name').first();
+  await toggle.scrollIntoViewIfNeeded();
+  await toggle.click();
+  const input = panel.getByPlaceholder('Enter company name or domain').first();
+  await input.click();
+  await input.pressSequentially(company, { delay: 40 });
+  await input.press('Enter');
+}
+
+// ---------- By past companies ----------
+async function setPastCompanyName(page, company) {
+  const panel = await expandAndGetPanel(page, pastCompaniesAcc);
+  const combo = panel.getByRole('combobox', { name: 'Search company...' }).first();
+  await pickCompanySuggestion(page, combo, company);
+}
+
+async function setPastCompanyLinkedIn(page, url) {
+  const panel = await expandAndGetPanel(page, pastCompaniesAcc);
+  const input = panel.getByPlaceholder('Enter past company LinkedIn URLs');
+  await input.click();
+  await input.pressSequentially(url, { delay: 15 });
+  await input.press('Enter');
 }
 
 // ============================================================
@@ -441,6 +566,66 @@ test.describe('Contacts Page filters (shared page)', () => {
   });
 
   // ----------------------------------------------------------------
+  // Headquarter location — tree selection + manual autocomplete entry
+  // ----------------------------------------------------------------
+  test('Headquarter location (tree) returns contacts with HQ in the selected region', async () => {
+    await selectHeadquarterTreeNode(page, 'CA States');
+    await applyAndExpectResults(page);
+  });
+
+  test('Headquarter location (manual autocomplete) returns contacts with the typed HQ', async () => {
+    await enterHeadquarterLocationManually(page, 'London');
+    await applyAndExpectResults(page);
+  });
+
+  // ----------------------------------------------------------------
+  // Current Company — name autocomplete, manual name, LinkedIn URL,
+  // Headcount range, Company Type
+  // ----------------------------------------------------------------
+  test('Current Company name filter returns contacts at the company', async () => {
+    await setCompanyName(page, 'Microsoft');
+    await applyAndExpectResults(page);
+  });
+
+  test('Current Company manual name entry returns contacts at the typed company', async () => {
+    await setCompanyNameManually(page, currentCompanyAcc, 'Tesla');
+    await applyAndExpectResults(page);
+  });
+
+  test('Company LinkedIn URL filter returns contacts at that company', async () => {
+    await setCompanyLinkedIn(page, 'https://www.linkedin.com/company/amazon');
+    await applyAndExpectResults(page);
+  });
+
+  test('Headcount range filter returns contacts at companies within the range', async () => {
+    await setHeadcount(page, 50, 1000);
+    await applyAndExpectResults(page);
+  });
+
+  test('Company Type filter returns contacts at the selected company type', async () => {
+    await selectCompanyType(page, 'Privately Held');
+    await applyAndExpectResults(page);
+  });
+
+  // ----------------------------------------------------------------
+  // By past companies — name autocomplete, manual name, past LinkedIn URLs
+  // ----------------------------------------------------------------
+  test('Past company name filter returns contacts who worked at the company', async () => {
+    await setPastCompanyName(page, 'Oracle');
+    await applyAndExpectResults(page);
+  });
+
+  test('Past company manual name entry returns contacts for the typed company', async () => {
+    await setCompanyNameManually(page, pastCompaniesAcc, 'Yahoo');
+    await applyAndExpectResults(page);
+  });
+
+  test('Past Company LinkedIn URL filter returns contacts who worked there', async () => {
+    await setPastCompanyLinkedIn(page, 'https://www.linkedin.com/company/ibm');
+    await applyAndExpectResults(page);
+  });
+
+  // ----------------------------------------------------------------
   // Clear All resets filter state
   // ----------------------------------------------------------------
   test('Clear All restores default state after applying a filter', async () => {
@@ -576,6 +761,86 @@ test.describe('Contacts Page filters (shared page)', () => {
     await chooseDegree(page, 'PhD');
     await chooseTitle(page, 'Software Engineer');
     await selectTreeNode(page, locationAcc, 'US States');
+    await applyAndExpectResults(page);
+  });
+
+  // ================================================================
+  // Combination scenarios with the company/HQ filters — mix the new
+  // Headquarter location, Current Company and By past companies filters
+  // with the earlier title/skill/industry/level/experience filters.
+  // ================================================================
+  test('Scenario: Product Managers currently at Netflix (title + company)', async () => {
+    await chooseTitle(page, 'Product Manager');
+    await setCompanyName(page, 'Netflix');
+    await applyAndExpectResults(page);
+  });
+
+  test('Scenario: Data Scientists at companies headquartered in CA (title + HQ tree)', async () => {
+    await chooseTitle(page, 'Data Scientist');
+    await selectHeadquarterTreeNode(page, 'CA States');
+    await applyAndExpectResults(page);
+  });
+
+  test('Scenario: Advertising-industry contacts at mid-size companies (industry + headcount)', async () => {
+    await selectTreeNode(page, industryAcc, 'Advertising Services');
+    await setHeadcount(page, 51, 200);
+    await applyAndExpectResults(page);
+  });
+
+  test('Scenario: SQL-skilled contacts currently at Adobe (skill + company)', async () => {
+    await addSkill(page, 'SQL');
+    await setCompanyName(page, 'Adobe');
+    await applyAndExpectResults(page);
+  });
+
+  test('Scenario: Vice Presidents who previously worked at Salesforce (level + past company)', async () => {
+    await selectTreeNode(page, roleSeniorityAcc, 'Vice President');
+    await setPastCompanyName(page, 'Salesforce');
+    await applyAndExpectResults(page);
+  });
+
+  test('Scenario: AWS-experienced contacts with HQ in Berlin (keyword + manual HQ)', async () => {
+    await addExperienceKeyword(page, 'AWS');
+    await enterHeadquarterLocationManually(page, 'Berlin');
+    await applyAndExpectResults(page);
+  });
+
+  test('Scenario: public-company contacts in US metro regions (company type + location)', async () => {
+    await selectCompanyType(page, 'Public Company');
+    await selectTreeNode(page, locationAcc, 'US Metro Regions');
+    await applyAndExpectResults(page);
+  });
+
+  test('Scenario: experienced contacts currently at Apple (company + years of experience)', async () => {
+    await setCompanyName(page, 'Apple');
+    await setYearsOfExperience(page, 3, 15);
+    await applyAndExpectResults(page);
+  });
+
+  test('Scenario: Finance-role contacts who previously worked at Intel (past LinkedIn + job role)', async () => {
+    await setPastCompanyLinkedIn(page, 'https://www.linkedin.com/company/intel');
+    await selectTreeNode(page, roleSeniorityAcc, 'Finance');
+    await applyAndExpectResults(page);
+  });
+
+  test('Scenario: Marketing Managers at privately held US companies (title + type + location)', async () => {
+    await chooseTitle(page, 'Marketing Manager');
+    await selectCompanyType(page, 'Privately Held');
+    await selectTreeNode(page, locationAcc, 'US States');
+    await applyAndExpectResults(page);
+  });
+
+  test('Scenario: Python-skilled contacts at small international-HQ companies (skill + HQ + headcount)', async () => {
+    await addSkill(page, 'Python');
+    await selectHeadquarterTreeNode(page, 'International');
+    await setHeadcount(page, 201, 500);
+    await applyAndExpectResults(page);
+  });
+
+  test('Scenario: senior contacts at Google who previously worked at Microsoft (level + company + past company)', async () => {
+    await selectTreeNode(page, roleSeniorityAcc, 'Senior');
+    await setCompanyName(page, 'Google');
+    await setPastCompanyName(page, 'Microsoft');
     await applyAndExpectResults(page);
   });
 });
