@@ -36,6 +36,15 @@ While testing the Chatbot on any page (Contacts, Companies, Jobs, Recruitment, o
 
 ---
 
+## Clarification Questions
+
+* For some prompts the chatbot does not apply filters immediately — it asks a clarification question to confirm what is being searched (e.g. "Are you looking for job openings, contacts to reach out to, or candidates to hire?"). This usually happens when the prompt does not mention the entity word (contacts, companies, candidates, jobs).
+* When the chatbot asks a clarification question, answer it through the same chat input with the entity matching the page under test: "contacts" (Contacts), "companies" (Companies), "candidates to hire" (Recruitment), "job openings" (Jobs).
+* After answering, wait again for the response — the chatbot then applies the filters. Very vague prompts may trigger a second clarification; keep answering (capped) before validating.
+* Only validate the expected result after the clarification round(s) finish and the filters are applied.
+
+---
+
 ## Important Notes
 
 * Never re-login between prompt tests.
