@@ -112,6 +112,101 @@ async function setSpin(spin, value) {
   await spin.pressSequentially(value, { delay: 50 });
 }
 
+// Set a checkbox to an explicit desired state (no-op if already in that state).
+async function setCheckbox(checkbox, shouldCheck) {
+  await expect(checkbox).toBeVisible({ timeout: 10000 });
+  const isChecked = await checkbox.isChecked();
+  if (shouldCheck && !isChecked) await checkbox.check();
+  if (!shouldCheck && isChecked) await checkbox.uncheck();
+}
+
+// The "Export Selected" toolbar button sits at the far right of the results
+// area, so nudge the nearest horizontally-scrollable ancestor fully right to
+// bring it into view before clicking (best-effort; safe if nothing scrolls).
+async function scrollResultsHorizontally(page) {
+  await resultsTable(page)
+    .evaluate((el) => {
+      let node = el.parentElement;
+      while (node) {
+        if (node.scrollWidth > node.clientWidth) {
+          node.scrollLeft = node.scrollWidth;
+          break;
+        }
+        node = node.parentElement;
+      }
+    })
+    .catch(() => {});
+}
+
+// Direct export straight from the results toolbar (NOT the personalized email
+// flow): Export Selected → "Export to <destination>" → export popup. The CSV,
+// HubSpot, zapier and Salesforce exports share the exact same toolbar button,
+// dropdown, popup and confirmation — only the dropdown item label differs — so
+// they all route through this one helper and the thin named wrappers below.
+//   destinationRe: regex matching the dropdown item (e.g. /Export to CSV/i).
+//   opts: { businessEmail, unverified, supplementaryInfo } each set their
+//         checkbox to the requested boolean state before clicking Export.
+async function exportSelectedTo(page, destinationRe, { businessEmail, unverified, supplementaryInfo }) {
+  await scrollResultsHorizontally(page);
+
+  // "Export selected" sits at the far-right edge of the scrollable toolbar —
+  // scroll it into view or the click won't land.
+  const exportSelectedBtn = page.getByRole('button', { name: /Export selected/i });
+  await expect(exportSelectedBtn).toBeEnabled({ timeout: 15000 });
+  await exportSelectedBtn.scrollIntoViewIfNeeded().catch(() => {});
+  await exportSelectedBtn.click();
+
+  // Export dropdown appears. The destination item is a PrimeNG button that
+  // animates in and re-mounts, so a normal click fails the stability check —
+  // let it settle, then force-click with a dispatchEvent fallback.
+  const destinationOption = page.getByText(destinationRe).first();
+  await expect(destinationOption).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(500);
+  await destinationOption.click({ force: true }).catch(async () => {
+    await destinationOption.dispatchEvent('click');
+  });
+
+  // Export popup is displayed (scope subsequent locators to it)
+  const dialog = page.getByRole('dialog').last();
+  await expect(dialog).toBeVisible({ timeout: 15000 });
+
+  // "Business Email" checkbox (label may read "Business Emails only")
+  const businessCheckbox = dialog.getByRole('checkbox', { name: /Business Email/i });
+  await setCheckbox(businessCheckbox, businessEmail);
+
+  // "Unverified Emails" is a sub-option of Business Email: it is only present
+  // while Business Email is checked. Touch it only when it is actually shown.
+  const unverifiedCheckbox = dialog.getByRole('checkbox', { name: /Unverified Emails/i });
+  if (await unverifiedCheckbox.isVisible().catch(() => false)) {
+    await setCheckbox(unverifiedCheckbox, unverified);
+  }
+
+  // Supplementary Info is itself a checkbox — set to the requested state.
+  const supplementaryCheckbox = dialog.getByRole('checkbox', { name: /Supplementary Info/i });
+  await setCheckbox(supplementaryCheckbox, supplementaryInfo);
+
+  const exportBtn = dialog.getByRole('button', { name: /^Export$/i });
+  await expect(exportBtn).toBeEnabled({ timeout: 10000 });
+  await exportBtn.click();
+
+  // Token-usage confirmation appears after a short delay: "This action will use
+  // approximately N tokens. Are you sure you want to proceed?" → Yes. Wait for
+  // it (the click races the dialog), then confirm it closes so cleanup is clear.
+  const yesBtn = page.getByRole('button', { name: /^Yes$/i });
+  await yesBtn.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+  if (await yesBtn.isVisible().catch(() => false)) {
+    await yesBtn.click();
+    await yesBtn.waitFor({ state: 'hidden', timeout: 15000 }).catch(() => {});
+  }
+}
+
+// Named wrappers — one per export destination. They differ only in the dropdown
+// item label, so they delegate to exportSelectedTo() above.
+const exportSelectedToCsv = (page, opts) => exportSelectedTo(page, /Export to CSV/i, opts);
+const exportSelectedToHubSpot = (page, opts) => exportSelectedTo(page, /Export to HubSpot/i, opts);
+const exportSelectedToZapier = (page, opts) => exportSelectedTo(page, /Export to zapier/i, opts);
+const exportSelectedToSalesforce = (page, opts) => exportSelectedTo(page, /Export to Salesforce/i, opts);
+
 // ---------- shared flow helpers ----------
 
 // Step: Choose Sender Profile → pick Fatima/QA → Save & Continue
@@ -438,5 +533,159 @@ test.describe('Contacts Page functionalities (shared page)', () => {
     await chooseSenderProfile(page);
     await chooseMethodAndContinue(page, 'template');
     await sendEmail(page);
+  });
+
+  // ================================================================
+  // Feature 4 — Export Selected → Export to CSV (Supplementary Info)
+  // Direct export from the results toolbar (no personalized email).
+  // ================================================================
+
+  test('Export CSV (1/3) — only Supplementary Info: Business Email unchecked, Unverified unchecked', async () => {
+    test.setTimeout(120000);
+
+    await chooseTitle(page, 'Software Engineer');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    await exportSelectedToCsv(page, { businessEmail: false, unverified: false, supplementaryInfo: true });
+  });
+
+  test('Export CSV (2/3) — Business Email + Unverified checked, Supplementary Info unchecked', async () => {
+    test.setTimeout(120000);
+
+    await chooseTitle(page, 'Product Manager');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    await exportSelectedToCsv(page, { businessEmail: true, unverified: true, supplementaryInfo: false });
+  });
+
+  test('Export CSV (3/3) — all options enabled (keep Business Email checked if already set)', async () => {
+    test.setTimeout(120000);
+
+    await setCompanyName(page, 'Microsoft');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    // setCheckbox ensures Business Email ends up checked without unchecking it
+    // when it was already selected.
+    await exportSelectedToCsv(page, { businessEmail: true, unverified: true, supplementaryInfo: true });
+  });
+
+  // ================================================================
+  // Feature 5 — Export Selected → Export to HubSpot
+  // Direct export from the results toolbar (no personalized email).
+  // ================================================================
+
+  test('Export HubSpot (1/3) — only Supplementary Info: Business Email unchecked, Unverified unchecked', async () => {
+    test.setTimeout(120000);
+
+    await chooseTitle(page, 'Software Engineer');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    await exportSelectedToHubSpot(page, { businessEmail: false, unverified: false, supplementaryInfo: true });
+  });
+
+  test('Export HubSpot (2/3) — Business Email + Unverified, Supplementary Info unchecked', async () => {
+    test.setTimeout(120000);
+
+    await chooseTitle(page, 'Product Manager');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    await exportSelectedToHubSpot(page, { businessEmail: true, unverified: true, supplementaryInfo: false });
+  });
+
+  test('Export HubSpot (3/3) — all options enabled (Business Email + Unverified + Supplementary Info)', async () => {
+    test.setTimeout(120000);
+
+    await setCompanyName(page, 'Microsoft');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    await exportSelectedToHubSpot(page, { businessEmail: true, unverified: true, supplementaryInfo: true });
+  });
+
+  // ================================================================
+  // Feature 6 — Export Selected → Export to zapier (Supplementary Info)
+  // Direct export from the results toolbar (no personalized email).
+  // ================================================================
+
+  test('Export zapier (1/3) — only Supplementary Info: Business Email unchecked, Unverified unchecked', async () => {
+    test.setTimeout(120000);
+
+    await chooseTitle(page, 'Software Engineer');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    await exportSelectedToZapier(page, { businessEmail: false, unverified: false, supplementaryInfo: true });
+  });
+
+  test('Export zapier (2/3) — Business Email + Unverified checked, Supplementary Info unchecked', async () => {
+    test.setTimeout(120000);
+
+    await chooseTitle(page, 'Product Manager');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    await exportSelectedToZapier(page, { businessEmail: true, unverified: true, supplementaryInfo: false });
+  });
+
+  test('Export zapier (3/3) — all options enabled (Business Email + Unverified + Supplementary Info)', async () => {
+    test.setTimeout(120000);
+
+    await setCompanyName(page, 'Microsoft');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    await exportSelectedToZapier(page, { businessEmail: true, unverified: true, supplementaryInfo: true });
+  });
+
+  // ================================================================
+  // Feature 7 — Export Selected → Export to Salesforce
+  // Direct export from the results toolbar (no personalized email).
+  // ================================================================
+
+  test('Export Salesforce (1/3) — only Supplementary Info: Business Email unchecked, Unverified unchecked', async () => {
+    test.setTimeout(120000);
+
+    await chooseTitle(page, 'Software Engineer');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    await exportSelectedToSalesforce(page, { businessEmail: false, unverified: false, supplementaryInfo: true });
+  });
+
+  test('Export Salesforce (2/3) — Business Email + Unverified checked, Supplementary Info unchecked', async () => {
+    test.setTimeout(120000);
+
+    await chooseTitle(page, 'Product Manager');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    await exportSelectedToSalesforce(page, { businessEmail: true, unverified: true, supplementaryInfo: false });
+  });
+
+  test('Export Salesforce (3/3) — all options enabled (Business Email + Unverified + Supplementary Info)', async () => {
+    test.setTimeout(120000);
+
+    await setCompanyName(page, 'Microsoft');
+    await applyAndExpectResults(page);
+    const selected = await selectFirstRows(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    await exportSelectedToSalesforce(page, { businessEmail: true, unverified: true, supplementaryInfo: true });
   });
 });

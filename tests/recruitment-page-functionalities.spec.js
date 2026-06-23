@@ -24,6 +24,14 @@ const applyBtn = (page) => page.getByRole('button', { name: 'Apply Filters' });
 const clearAllBtn = (page) => page.getByRole('button', { name: /^Clear all$/i });
 const roleSeniorityAcc = (page) => page.getByRole('button', { name: 'Role and seniority' });
 const resultsTable = (page) => page.getByRole('table');
+const advancedSelectionBtn = (page) => page.getByRole('button', { name: /Advanced Selection/i });
+const saveToListsBtn = (page) => page.getByRole('button', { name: /^Save to lists$/i });
+const exportSelectedBtn = (page) => page.getByRole('button', { name: /Export selected/i });
+
+// ---------- CSV export popup option locators ----------
+const businessEmailOption = (page) => page.getByRole('checkbox', { name: /Business Emails? only/i });
+const unverifiedEmailOption = (page) => page.getByRole('checkbox', { name: /Unverified Emails/i });
+const supplementaryInfoOption = (page) => page.getByRole('checkbox', { name: /Supplementary Info/i });
 
 // ---------- filter workflow helpers (reused) ----------
 async function expandSection(page, accordionBtnFn) {
@@ -87,6 +95,151 @@ async function cloneFirstCandidate(page) {
   await candidateRow.scrollIntoViewIfNeeded();
   await candidateRow.hover();
   await cloneBtn.click();
+}
+
+// ---------- Advanced Selection + Save to List helpers ----------
+// PrimeNG spinbuttons ignore .fill() — click, select-all, then type the digits.
+async function setSpin(spin, value) {
+  await spin.click();
+  await spin.press('Control+A');
+  await spin.pressSequentially(value, { delay: 50 });
+}
+
+// Open "Advanced Selection" and select a page range (Start page → End page), then
+// apply. The Recruitment page exposes this as a small panel above the results with
+// a Start/End page range (it lets you select beyond the current page, up to the
+// page cap shown in the panel), mirroring the Contacts Advanced Selection.
+async function selectPageRange(page, startPage, endPage) {
+  await advancedSelectionBtn(page).click();
+  const advPanel = page.getByRole('dialog').filter({ hasText: /Advanced Selection/i });
+  await expect(advPanel).toBeVisible({ timeout: 15000 });
+
+  const spinners = advPanel.getByRole('spinbutton');
+  await setSpin(spinners.nth(0), String(startPage));
+  await setSpin(spinners.nth(1), String(endPage));
+
+  // The apply control is labelled "Apply Options" / "Apply Selection" depending on
+  // the build — match either.
+  const applySelection = advPanel.getByRole('button', { name: /Apply (Options|Selection)/i });
+  await expect(applySelection).toBeEnabled({ timeout: 10000 });
+  await applySelection.click();
+}
+
+// Save the current selection to a brand-new list (Search or create list → type a
+// unique name → Create new list → Create List). Same list-builder dialog the
+// Contacts page uses.
+async function saveSelectionToNewList(page, listName) {
+  await expect(saveToListsBtn(page)).toBeEnabled({ timeout: 15000 });
+  await saveToListsBtn(page).click();
+
+  const listSearch = page.getByRole('searchbox', { name: 'Search or create list' });
+  await expect(listSearch).toBeVisible({ timeout: 15000 });
+  await listSearch.fill(listName);
+
+  const createNew = page.getByText(/Create new list/i);
+  await expect(createNew).toBeVisible({ timeout: 10000 });
+  await createNew.click();
+
+  // Footer button relabels from "Save" to "Create List" once a new name is staged.
+  const createListBtn = page.getByRole('button', { name: /^Create List$/ });
+  await expect(createListBtn).toBeEnabled({ timeout: 10000 });
+  await createListBtn.click();
+
+  // The dialog closing confirms the list was created with the selected candidates.
+  await expect(listSearch).toBeHidden({ timeout: 15000 });
+}
+
+// ---------- Export helpers ----------
+// Select the first `n` candidate rows by checking each row's checkbox. The
+// "Select all" control lives in the toolbar (not a table row), so each results
+// row exposes exactly one candidate checkbox.
+async function selectFirstCandidates(page, n) {
+  const rows = resultsTable(page).getByRole('row');
+  const total = await rows.count();
+  let selected = 0;
+  for (let i = 0; i < total && selected < n; i++) {
+    const cb = rows.nth(i).getByRole('checkbox').first();
+    if ((await cb.count()) === 0) continue;
+    await cb.scrollIntoViewIfNeeded().catch(() => {});
+    await cb.check();
+    selected++;
+  }
+  return selected;
+}
+
+// Open the "Export selected" dropdown → "Export to CSV" and wait for the export
+// popup to render. Shared by every CSV-export case (Steps 4–8). Returns once the
+// popup is on screen (its "Unverified Emails" option is the render marker).
+async function openCsvExportPopup(page) {
+  // Step 4 — The results toolbar is horizontally scrollable and the "Export
+  // selected" button sits at its far-right edge, so it can be out of the visible
+  // area. Scroll it into view before interacting so the click reliably lands.
+  const exportSelected = exportSelectedBtn(page);
+  await expect(exportSelected).toBeEnabled({ timeout: 30000 });
+  await exportSelected.scrollIntoViewIfNeeded().catch(() => {});
+
+  // Step 5 — Click "Export selected". Step 6 — confirm the dropdown opened (its
+  // "Export to CSV" item appears); if the menu didn't open, click once more.
+  await exportSelected.click();
+  const exportToCsvOption = page.getByRole('button', { name: /Export to CSV/i }).first();
+  if (!(await exportToCsvOption.isVisible().catch(() => false))) {
+    await exportSelected.click();
+  }
+  await expect(exportToCsvOption).toBeVisible({ timeout: 10000 });
+
+  // Step 7 — Click "Export to CSV". The PrimeNG dropdown item animates in (and
+  // auto-focuses), so a normal click keeps failing the "element is stable" check
+  // until the item detaches/re-mounts. Let the entrance animation settle, then
+  // force the click (skips the actionability wait); fall back to dispatching it.
+  await page.waitForTimeout(500);
+  try {
+    await exportToCsvOption.click({ force: true, timeout: 8000 });
+  } catch {
+    await exportToCsvOption.dispatchEvent('click').catch(() => {});
+  }
+
+  // Step 8 — Verify the export popup ("Choose Export Type (CSV)") is displayed.
+  await expect(unverifiedEmailOption(page)).toBeVisible({ timeout: 15000 });
+}
+
+// Set a popup checkbox to an exact desired state, but only when it is present.
+// `desired`: true → ensure checked, false → ensure unchecked, undefined → leave
+// it untouched (don't check or uncheck). Returns true if the option was found.
+async function setExportOption(option, desired) {
+  if (desired === undefined) return false;
+  if (!(await option.isVisible().catch(() => false))) return false;
+  const checked = await option.isChecked().catch(() => false);
+  if (desired && !checked) await option.check();
+  if (!desired && checked) await option.uncheck();
+  return true;
+}
+
+// Click "Export" and confirm the optional token-usage prompt if it appears.
+async function submitCsvExport(page) {
+  const exportBtn = page.getByRole('button', { name: /^Export$/i });
+  await expect(exportBtn).toBeEnabled({ timeout: 10000 });
+  await exportBtn.click();
+
+  // A token-usage confirmation ("...will use approximately X tokens...") may
+  // follow on some builds — confirm it if it appears.
+  const yesBtn = page.getByRole('button', { name: /^Yes$/i });
+  if (await yesBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await yesBtn.click();
+  }
+}
+
+// Full CSV export with explicit popup options. Open the popup, set each option to
+// its desired state (undefined = leave as-is), then Export. `supplementaryInfo`
+// defaults to undefined so existing callers are unaffected.
+async function exportSelectedToCsv(page, opts = {}) {
+  const { businessEmails, unverifiedEmails, supplementaryInfo } = opts;
+  await openCsvExportPopup(page);
+
+  await setExportOption(businessEmailOption(page), businessEmails);
+  await setExportOption(unverifiedEmailOption(page), unverifiedEmails);
+  await setExportOption(supplementaryInfoOption(page), supplementaryInfo);
+
+  await submitCsvExport(page);
 }
 
 // ---------- test suite ----------
@@ -155,5 +308,88 @@ test.describe.serial('Recruitment Page functionalities (shared page)', () => {
 
     // The dialog closing confirms the clone was saved.
     await expect(cloneDialog).toBeHidden({ timeout: 20000 });
+  });
+
+  // ================================================================
+  // Test Case 2 — Advanced Selection → Save candidates to a new List
+  // ================================================================
+  // Mirrors the Contacts "Save to List" flow, but on the Recruitment page:
+  // apply a filter so candidates render, open Advanced Selection and pick a page
+  // range (selects candidates beyond the current page), then Save to lists into a
+  // brand-new list.
+  test('Test Case 2: Advanced Selection of a page range saves candidates to a new list', async () => {
+    // 1. Apply a filter so candidate results render.
+    await chooseTitle(page, 'Chief Technology Officer');
+    await applyAndExpectResults(page);
+
+    // 2. Open Advanced Selection and select pages 1–2.
+    await selectPageRange(page, 1, 2);
+
+    // 3. Save the selected candidates into a uniquely-named new list.
+    await saveSelectionToNewList(page, `QA Recruitment List ${Date.now()}`);
+  });
+
+  // ================================================================
+  // Test Case 3 — Export selected candidates to CSV
+  // ================================================================
+  // Apply a filter so candidates render, select a few candidates, open the
+  // "Export selected" dropdown and choose "Export to CSV", then complete the CSV
+  // export popup (Business Emails only + Unverified Emails → Export → confirm).
+  test('Test Case 3: Export selected candidates to CSV', async () => {
+    // 1. Apply a filter so candidate results render.
+    await chooseTitle(page, 'Chief Technology Officer');
+    await applyAndExpectResults(page);
+
+    // 2. Select a few candidates.
+    const selected = await selectFirstCandidates(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    // 3. Export selected → Export to CSV → finish the CSV export popup.
+    await exportSelectedToCsv(page, { businessEmails: true, unverifiedEmails: true });
+  });
+
+  // ================================================================
+  // Test Case 4 — Export CSV with Supplementary Info
+  // ================================================================
+  // Open the CSV export popup, then: uncheck "Business Emails only", leave
+  // "Unverified Emails" unchecked, check "Supplementary Info", and Export.
+  test('Test Case 4: Export selected candidates to CSV with Supplementary Info', async () => {
+    // 1. Apply a filter so candidate results render.
+    await chooseTitle(page, 'Chief Technology Officer');
+    await applyAndExpectResults(page);
+
+    // 2. Select a few candidates.
+    const selected = await selectFirstCandidates(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    // 3. Export to CSV: Business Email off, Unverified off, Supplementary Info on.
+    await exportSelectedToCsv(page, {
+      businessEmails: false,
+      unverifiedEmails: false,
+      supplementaryInfo: true,
+    });
+  });
+
+  // ================================================================
+  // Test Case 5 — Export CSV with all options enabled
+  // ================================================================
+  // Open the CSV export popup, then: ensure "Business Emails only" is checked
+  // (without unchecking it if already on), check "Unverified Emails", check
+  // "Supplementary Info", and Export.
+  test('Test Case 5: Export selected candidates to CSV with all options enabled', async () => {
+    // 1. Apply a filter so candidate results render.
+    await chooseTitle(page, 'Chief Technology Officer');
+    await applyAndExpectResults(page);
+
+    // 2. Select a few candidates.
+    const selected = await selectFirstCandidates(page, 2);
+    expect(selected).toBeGreaterThan(0);
+
+    // 3. Export to CSV with every option enabled.
+    await exportSelectedToCsv(page, {
+      businessEmails: true,
+      unverifiedEmails: true,
+      supplementaryInfo: true,
+    });
   });
 });

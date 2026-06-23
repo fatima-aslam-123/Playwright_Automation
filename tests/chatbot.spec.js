@@ -196,6 +196,7 @@ async function resetToFreshChat(page, moduleUrl, modulePath) {
 // distinct values.
 const MODULES = [
   {
+    
     name: 'Contacts',
     path: '/search/contacts',
     url: 'https://preprod.zenbee.io/search/contacts',
